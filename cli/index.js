@@ -8,83 +8,60 @@ let boxen = require('boxen');
 if (chalk.default) chalk = chalk.default;
 if (boxen.default) boxen = boxen.default;
 
-const qrcode = require('qrcode-terminal');
+const qrcode      = require('qrcode-terminal');
 const cliProgress = require('cli-progress');
-const fs = require('fs-extra');
-const path = require('path');
-const Peer = require('simple-peer');
-const wrtc = require('@koush/wrtc');
-const crypto = require('crypto');
-const readline = require('readline');
+const fs          = require('fs-extra');
+const path        = require('path');
+const Peer        = require('simple-peer');
+const wrtc        = require('@koush/wrtc');
+const readline    = require('readline');
+const {
+  TYPES,
+  sanitizeRoomCode,
+  parseJsonMessage,
+  isFileMetaMessage,
+  isTransferAcceptedMessage,
+  isTransferRejectedMessage,
+  buildRtcConfigFromEnv
+} = require('../protocol/messages');
 
-const SERVER_URL = process.env.SIGNALING_SERVER || 'https://filedrop-om51.onrender.com';
-const CHUNK_SIZE = 262144; // 256KB - Ultra-fast throughput
-const MAX_BUFFERED_AMOUNT = 16777216; // 16MB - Safer limit for send queue
-const MIN_BUFFERED_AMOUNT = 4194304; // 4MB - Resume threshold
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turns:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
-  ],
-  iceCandidatePoolSize: 10
-};
+const SERVER_URL         = process.env.SIGNALING_SERVER || 'https://filedrop-om51.onrender.com';
+const CHUNK_SIZE         = 262144;   // 256 KB
+const MAX_BUFFERED_AMOUNT = 16777216; // 16 MB high-water mark
+const MIN_BUFFERED_AMOUNT =  4194304; //  4 MB resume threshold
 
-const E2E_ALGO = 'aes-256-ctr';
-const E2E_KEY = crypto.createHash('sha256').update('filedrop-default-key-v2').digest();
+const RTC_CONFIG = buildRtcConfigFromEnv(process.env);
 
-// ── VERBOSE LOGGING HELPER ──────────────────────────────────────────────────
+// ── Logging ──────────────────────────────────────────────────────────────────
 function debug(msg, type = 'info') {
   const t = new Date().toLocaleTimeString([], { hour12: false });
   const prefix = chalk.gray(`[${t}] `);
   let content = msg;
-  if (type === 'error') content = chalk.red('✖ ' + msg);
+  if (type === 'error')   content = chalk.red('✖ ' + msg);
   if (type === 'success') content = chalk.green('✔ ' + msg);
-  if (type === 'warn') content = chalk.yellow('⚠ ' + msg);
-  if (type === 'signal') content = chalk.magenta('⇄ ' + msg);
+  if (type === 'warn')    content = chalk.yellow('⚠ ' + msg);
+  if (type === 'signal')  content = chalk.magenta('⇄ ' + msg);
   console.log(prefix + content);
 }
 
-function parseIce(candidate) {
-  if (!candidate) return null;
-  if (typeof candidate === 'string') return { candidate, sdpMid: '0', sdpMLineIndex: 0 };
-  if (candidate.candidate) return candidate;
-  const str = candidate.sdp || candidate;
-  if (typeof str === 'string') return { candidate: str, sdpMid: candidate.sdpMid || '0', sdpMLineIndex: candidate.sdpMLineIndex || 0 };
-  return null;
-}
-
 function sanitizeFilename(name) {
-  // Preserve spaces, brackets, parentheses. Strip path components and restricted chars.
   return name.replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '');
 }
 
 function askQuestion(query) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise(resolve => rl.question(query, ans => {
-    rl.close();
-    resolve(ans);
-  }));
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(query, ans => { rl.close(); resolve(ans); }));
 }
 
+// ── CLI definition ───────────────────────────────────────────────────────────
 program
   .name('filedrop')
   .description('P2P file sharing from your terminal')
   .version('1.0.0');
 
+// ════════════════════════════════════════════════════════════════════════════
+//  SEND
+// ════════════════════════════════════════════════════════════════════════════
 program
   .command('send')
   .description('Send a file from your terminal')
@@ -95,15 +72,23 @@ program
       process.exit(1);
     }
 
-    const stats = await fs.stat(filePath);
+    const stats    = await fs.stat(filePath);
     const fileName = path.basename(filePath);
     const fileSize = stats.size;
 
-    debug(`Sender reading file: "${fileName}"`, 'info');
+    debug(`Sending: "${fileName}" (${(fileSize / 1048576).toFixed(2)} MB)`, 'info');
     console.log(boxen(chalk.bold.cyan('Filedrop CLI — Sending Mode'), { padding: 1, margin: 1, borderStyle: 'round' }));
-    
-    const socket = io(SERVER_URL);
+
+    const socket = io(SERVER_URL, { reconnectionAttempts: 5 });
     let peer = null;
+
+    // ── Top-level signal relay — never duplicated ─────────────────────────────
+    socket.on('signal', ({ data }) => {
+      if (peer) {
+        debug(`Received signal: ${data.type || 'ice'}`, 'signal');
+        peer.signal(data);
+      }
+    });
 
     socket.on('connect', () => {
       debug(`Connected to server (${socket.id})`, 'success');
@@ -112,134 +97,151 @@ program
 
     socket.on('room-created', ({ code }) => {
       debug(`Room created: ${chalk.bold(code)}`, 'success');
-      console.log(chalk.gray('Scan QR or use: ') + chalk.white(`filedrop receive ${code}`));
-      
+      console.log(chalk.gray('\nShare code: ') + chalk.white.bold(`filedrop receive ${code}`));
       const joinUrl = `${SERVER_URL}/?code=${code}`;
+      console.log(chalk.gray('Or scan QR to open in browser:'));
       qrcode.generate(joinUrl, { small: true });
-      debug('Waiting for peer to join signaling room...', 'info');
+      debug('Waiting for peer to join…', 'info');
     });
 
-    socket.on('room-ready', ({ code }) => {
-      debug('Peer detected in room. Initializing WebRTC...', 'info');
-      
-      peer = new Peer({ 
-        initiator: true, 
-        trickle: true, 
-        wrtc,
-        config: RTC_CONFIG 
-      });
+    socket.on('room-ready', () => {
+      debug('Peer detected. Initializing WebRTC…', 'info');
+
+      peer = new Peer({ initiator: true, trickle: true, wrtc, config: RTC_CONFIG });
 
       peer.on('signal', data => {
-        debug(`Generated signaling ${data.type || 'ice'}`, 'signal');
-        socket.emit('signal', { code, data });
+        debug(`Generated signal: ${data.type || 'ice'}`, 'signal');
+        socket.emit('signal', { code: socket._roomCode, data });
       });
 
-      socket.on('signal', ({ data }) => {
-        debug(`Received signaling ${data.type || 'ice'} from peer`, 'signal');
-        peer.signal(data);
-      });
+      // Store room code when room-ready fires — we need it for signal relay
+      // We attach it to socket for convenience (already available in closure below)
 
       peer.on('connect', () => {
-        debug('P2P Data Channel is OPEN', 'success');
-        
-        debug(`Sending transfer-request for: "${fileName}"`, 'info');
-        peer.send(JSON.stringify({ type: 'file-meta', name: fileName, size: fileSize }));
+        debug('P2P Data Channel is OPEN ✔', 'success');
+        debug(`Sending file-meta for: "${fileName}"`, 'info');
+        peer.send(JSON.stringify({ type: TYPES.FILE_META, name: fileName, size: fileSize }));
       });
 
       peer.on('data', data => {
-        let payload;
-        try {
-          payload = JSON.parse(data.toString());
-        } catch (e) { return; }
+        const payload = parseJsonMessage(data);
+        if (!payload) return;
 
-        if (payload.type === 'transfer-accepted') {
-          debug('Peer accepted transfer. Starting stream...', 'success');
+        if (isTransferAcceptedMessage(payload)) {
+          debug('Peer accepted. Starting transfer…', 'success');
           startSending();
-        } else if (payload.type === 'transfer-rejected') {
+        } else if (isTransferRejectedMessage(payload)) {
           debug('Peer rejected the transfer.', 'error');
           process.exit(0);
         }
       });
 
-      function startSending() {
-        const progressBar = new cliProgress.SingleBar({
-          format: 'Sending |' + chalk.cyan('{bar}') + '| {percentage}% | {value}/{total} Chunks | {speed}',
-          barCompleteChar: '\u2588', barIncompleteChar: '\u2591', hideCursor: true
-        }, cliProgress.Presets.shades_classic);
-
-        progressBar.start(Math.ceil(fileSize / CHUNK_SIZE), 0, { speed: "0 MB/s" });
-
-        const fd = fs.openSync(filePath, 'r');
-        let offset = 0;
-        let startTime = Date.now();
-
-        const getBufferedAmount = () => (peer._channel ? peer._channel.bufferedAmount : 0);
-
-        function sendChunk() {
-          const buffer = Buffer.alloc(CHUNK_SIZE);
-          const bytesRead = fs.readSync(fd, buffer, 0, CHUNK_SIZE, offset);
-          
-          if (bytesRead > 0) {
-            let chunk = bytesRead === CHUNK_SIZE ? buffer : buffer.slice(0, bytesRead);
-            
-            // Send raw binary chunk (No encryption to ensure byte-for-byte interop)
-            peer.send(chunk);
-            offset += bytesRead;
-            
-            const elapsed = (Date.now() - startTime) / 1000;
-            const speed = (offset / (1024 * 1024) / elapsed).toFixed(2) + " MB/s";
-            progressBar.update(Math.ceil(offset / CHUNK_SIZE), { speed });
-            
-            if (getBufferedAmount() > MAX_BUFFERED_AMOUNT) {
-              // Wait for buffer to drain significantly before resuming
-              const checkDrain = setInterval(() => {
-                if (getBufferedAmount() < MIN_BUFFERED_AMOUNT) {
-                  clearInterval(checkDrain);
-                  sendChunk();
-                }
-              }, 10);
-            } else {
-              setImmediate(sendChunk);
-            }
-          } else {
-            progressBar.stop();
-            fs.closeSync(fd);
-            debug(`Transfer complete! Total sent: ${fileSize} bytes`, 'success');
-            setTimeout(() => process.exit(0), 1000);
-          }
-        }
-        sendChunk();
-      }
-
       peer.on('error', err => {
-        debug(`WebRTC Error: ${err.message}`, 'error');
+        debug(`WebRTC error: ${err.message}`, 'error');
         if (err.code === 'ERR_ICE_CONNECTION_FAILURE') {
-          debug('Connection failed. Likely a firewall/NAT issue. Try both devices on same Wi-Fi.', 'warn');
+          debug('NAT/firewall issue — try both devices on the same Wi-Fi.', 'warn');
         }
       });
+
+      peer.on('close', () => debug('P2P connection closed.', 'warn'));
     });
 
-    socket.on('disconnect', () => debug('Signaling server disconnected', 'warn'));
+    // Capture room code after creation for signal relay
+    socket.on('room-created', ({ code }) => { socket._roomCode = code; });
+
+    socket.on('disconnect', () => debug('Signaling server disconnected.', 'warn'));
+    socket.on('connect_error', (err) => debug(`Connection error: ${err.message}`, 'error'));
+
+    // ── Stream-based file sender (async I/O, no blocking) ─────────────────────
+    function startSending() {
+      const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+      const progressBar = new cliProgress.SingleBar({
+        format: 'Sending |' + chalk.cyan('{bar}') + '| {percentage}% | {value}/{total} chunks | {speed}',
+        barCompleteChar: '\u2588', barIncompleteChar: '\u2591', hideCursor: true
+      }, cliProgress.Presets.shades_classic);
+
+      progressBar.start(totalChunks, 0, { speed: '0 MB/s' });
+
+      const readStream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+      let offset    = 0;
+      let startTime = Date.now();
+      let paused    = false;
+
+      const getBuffered = () => (peer && peer._channel ? peer._channel.bufferedAmount : 0);
+
+      readStream.on('data', (chunk) => {
+        if (!peer) { readStream.destroy(); return; }
+
+        // Back-pressure: pause stream if send buffer is filling up
+        if (getBuffered() > MAX_BUFFERED_AMOUNT) {
+          readStream.pause();
+          paused = true;
+          const drain = setInterval(() => {
+            if (getBuffered() < MIN_BUFFERED_AMOUNT) {
+              clearInterval(drain);
+              paused = false;
+              readStream.resume();
+            }
+          }, 10);
+        }
+
+        peer.send(chunk);
+        offset += chunk.length;
+
+        const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+        const speed   = (offset / 1048576 / elapsed).toFixed(2) + ' MB/s';
+        progressBar.update(Math.ceil(offset / CHUNK_SIZE), { speed });
+      });
+
+      readStream.on('end', () => {
+        // Wait for send buffer to fully drain before announcing completion
+        const waitDrain = setInterval(() => {
+          if (getBuffered() === 0) {
+            clearInterval(waitDrain);
+            progressBar.stop();
+            debug(`Transfer complete! Sent ${fileSize} bytes.`, 'success');
+            setTimeout(() => process.exit(0), 1000);
+          }
+        }, 100);
+      });
+
+      readStream.on('error', err => {
+        progressBar.stop();
+        debug(`File read error: ${err.message}`, 'error');
+        process.exit(1);
+      });
+    }
   });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  RECEIVE
+// ════════════════════════════════════════════════════════════════════════════
 program
   .command('receive')
   .description('Receive a file in your terminal')
   .argument('<code>', 'The room code')
   .action((code) => {
-    code = code.toUpperCase();
+    code = sanitizeRoomCode(code);
     console.log(boxen(chalk.bold.green('Filedrop CLI — Receiving Mode'), { padding: 1, margin: 1, borderStyle: 'round' }));
-    
-    const socket = io(SERVER_URL);
-    let peer = null;
-    let fileMeta = null;
+
+    const socket = io(SERVER_URL, { reconnectionAttempts: 5 });
+    let peer        = null;
+    let fileMeta    = null;
     let receivedSize = 0;
     let writeStream = null;
     let progressBar = null;
-    let startTime = 0;
+    let startTime   = 0;
+
+    // ── Top-level signal relay ────────────────────────────────────────────────
+    socket.on('signal', ({ data }) => {
+      if (peer) {
+        debug(`Received signal: ${data.type || 'ice'}`, 'signal');
+        peer.signal(data);
+      }
+    });
 
     socket.on('connect', () => {
-      debug(`Connected to server. Joining ${code}...`, 'info');
+      debug(`Connected to server. Joining room ${code}…`, 'info');
       socket.emit('join-room', { code });
     });
 
@@ -248,111 +250,99 @@ program
       process.exit(1);
     });
 
-    socket.on('room-ready', ({ role }) => {
-      debug('Room ready. Initializing WebRTC...', 'info');
-      peer = new Peer({ 
-        initiator: false, 
-        trickle: true, 
-        wrtc, 
-        config: RTC_CONFIG 
-      });
+    socket.on('room-ready', () => {
+      debug('Room ready. Initializing WebRTC…', 'info');
+
+      peer = new Peer({ initiator: false, trickle: true, wrtc, config: RTC_CONFIG });
 
       peer.on('signal', data => {
-        debug(`Generated signaling ${data.type || 'ice'}`, 'signal');
+        debug(`Generated signal: ${data.type || 'ice'}`, 'signal');
         socket.emit('signal', { code, data });
       });
 
-      socket.on('signal', ({ data }) => {
-        debug(`Received signaling ${data.type || 'ice'} from peer`, 'signal');
-        peer.signal(data);
-      });
-
       peer.on('connect', () => {
-        debug('P2P Data Channel is OPEN', 'success');
+        debug('P2P Data Channel is OPEN ✔', 'success');
         startTime = Date.now();
       });
 
-      peer.on('data', async data => {
-        const dataType = typeof data;
-        const constructorName = data.constructor ? data.constructor.name : 'Unknown';
-        const dataSize = data.length || data.byteLength || 0;
-        
-        // Detailed logging for every incoming message
-        // debug(`Incoming: type=${dataType}, constructor=${constructorName}, size=${dataSize}`, 'signal');
-
+      peer.on('data', async (data) => {
+        // ── Control message (JSON) — only when we haven't accepted a file yet ──
         if (!fileMeta) {
-          let payload;
-          try {
-            const str = data.toString();
-            payload = JSON.parse(str);
-            debug(`Receiver got JSON message: "${str}"`, 'info');
-          } catch (e) {
-            debug(`Failed to parse JSON from ${constructorName} of size ${dataSize}. Still waiting for file-meta.`, 'warn');
+          const payload = parseJsonMessage(data);
+          if (!payload) {
+            debug('Waiting for file-meta (got non-JSON data)', 'warn');
             return;
           }
 
-          if (payload.type === 'file-meta') {
-            debug(`Receiver got transfer-request: "${payload.name}"`, 'info');
-            
-            const safeName = sanitizeFilename(payload.name);
-            const sizeMb = (payload.size / (1024 * 1024)).toFixed(2);
-            
-            console.log('\n' + boxen(
-              chalk.bold.yellow('Incoming File Transfer') + '\n\n' +
-              chalk.white(`File: ${payload.name}`) + '\n' +
-              chalk.white(`Size: ${sizeMb} MB`),
-              { padding: 1, borderStyle: 'double', borderColor: 'yellow' }
-            ));
+          if (!isFileMetaMessage(payload)) return;
 
-            const answer = await askQuestion(chalk.bold.cyan('Accept this file? (y/n): '));
-            
-            if (answer.toLowerCase() === 'y') {
-              debug('Accepting transfer...', 'success');
-              peer.send(JSON.stringify({ type: 'transfer-accepted' }));
-              
-              fileMeta = { ...payload, name: safeName };
-              const savePath = path.join(process.cwd(), fileMeta.name);
-              debug(`Receiver saving file to: "${savePath}"`, 'info');
-              
-              writeStream = fs.createWriteStream(savePath);
-              progressBar = new cliProgress.SingleBar({
-                format: 'Receiving |' + chalk.green('{bar}') + '| {percentage}% | {value}/{total} Chunks | {speed}',
-                barCompleteChar: '\u2588', barIncompleteChar: '\u2591', hideCursor: true
-              }, cliProgress.Presets.shades_classic);
-              progressBar.start(Math.ceil(fileMeta.size / CHUNK_SIZE), 0, { speed: "0 MB/s" });
-            } else {
-              debug('Rejecting transfer.', 'warn');
-              peer.send(JSON.stringify({ type: 'transfer-rejected' }));
-              // Keep running or exit? Let's exit for now to match CLI UX
-              process.exit(0);
-            }
+          debug(`Incoming file: "${payload.name}" (${(payload.size / 1048576).toFixed(2)} MB)`, 'info');
+
+          console.log('\n' + boxen(
+            chalk.bold.yellow('Incoming File Transfer') + '\n\n' +
+            chalk.white(`File: ${payload.name}`) + '\n' +
+            chalk.white(`Size: ${(payload.size / 1048576).toFixed(2)} MB`),
+            { padding: 1, borderStyle: 'double', borderColor: 'yellow' }
+          ));
+
+          const answer = await askQuestion(chalk.bold.cyan('Accept this file? (y/n): '));
+
+          if (answer.toLowerCase() !== 'y') {
+            debug('Rejecting transfer.', 'warn');
+            peer.send(JSON.stringify({ type: TYPES.TRANSFER_REJECTED }));
+            process.exit(0);
+            return;
           }
+
+          debug('Accepting transfer…', 'success');
+          peer.send(JSON.stringify({ type: TYPES.TRANSFER_ACCEPTED }));
+
+          const safeName = sanitizeFilename(payload.name);
+          const savePath = path.join(process.cwd(), safeName);
+          fileMeta = { ...payload, name: safeName, savePath };
+
+          debug(`Saving to: "${savePath}"`, 'info');
+          writeStream = fs.createWriteStream(savePath);
+
+          progressBar = new cliProgress.SingleBar({
+            format: 'Receiving |' + chalk.green('{bar}') + '| {percentage}% | {value}/{total} chunks | {speed}',
+            barCompleteChar: '\u2588', barIncompleteChar: '\u2591', hideCursor: true
+          }, cliProgress.Presets.shades_classic);
+          progressBar.start(Math.ceil(fileMeta.size / CHUNK_SIZE), 0, { speed: '0 MB/s' });
+
         } else {
-          // Write raw binary chunk directly to disk
+          // ── Binary chunk ────────────────────────────────────────────────────
           writeStream.write(data);
-          receivedSize += data.length;
-          
-          const elapsed = (Date.now() - startTime) / 1000;
-          const speed = (receivedSize / (1024 * 1024) / elapsed).toFixed(2) + " MB/s";
+          receivedSize += data.length || data.byteLength || 0;
+
+          const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+          const speed   = (receivedSize / 1048576 / elapsed).toFixed(2) + ' MB/s';
           progressBar.update(Math.ceil(receivedSize / CHUNK_SIZE), { speed });
 
           if (receivedSize >= fileMeta.size) {
             progressBar.stop();
-            writeStream.end();
-            
-            // Verification
-            const finalStats = fs.statSync(path.join(process.cwd(), fileMeta.name));
-            debug(`Saved to: ${fileMeta.name}`, 'success');
-            debug(`Integrity Check: Expected ${fileMeta.size} bytes | Saved ${finalStats.size} bytes`, 
-                  finalStats.size === fileMeta.size ? 'success' : 'error');
-            
-            setTimeout(() => process.exit(0), 1000);
+
+            // FIX: wait for writeStream to fully flush before stat-checking
+            writeStream.end(() => {
+              const finalStats = fs.statSync(fileMeta.savePath);
+              const ok = finalStats.size === fileMeta.size;
+              debug(`Saved: ${fileMeta.name}`, ok ? 'success' : 'error');
+              debug(
+                `Integrity: expected ${fileMeta.size} bytes | saved ${finalStats.size} bytes`,
+                ok ? 'success' : 'error'
+              );
+              setTimeout(() => process.exit(ok ? 0 : 1), 500);
+            });
           }
         }
       });
 
-      peer.on('error', err => debug(`WebRTC Error: ${err.message}`, 'error'));
+      peer.on('error', err => debug(`WebRTC error: ${err.message}`, 'error'));
+      peer.on('close', () => debug('P2P connection closed.', 'warn'));
     });
+
+    socket.on('disconnect', () => debug('Signaling server disconnected.', 'warn'));
+    socket.on('connect_error', (err) => debug(`Connection error: ${err.message}`, 'error'));
   });
 
 program.parse();

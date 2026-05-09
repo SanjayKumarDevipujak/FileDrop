@@ -723,6 +723,8 @@
 
 <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
+<script src="/protocol/messages.js"></script>
+<script src="/config.js"></script>
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
 //  STATE
@@ -744,6 +746,8 @@ let transferStart   = 0;
 const CHUNK_SIZE = 262144; // 256 KB — Ultra-fast throughput
 const MAX_BUFFERED_AMOUNT = 16777216; // 16 MB - Safer limit for browser send queue
 const MIN_BUFFERED_AMOUNT = 4194304; // 4 MB - Resume threshold to keep the flow aggressive
+const PROTOCOL = window.FiledropProtocol;
+const TYPES = PROTOCOL.TYPES;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  VIEW HELPER
@@ -807,12 +811,17 @@ const socket = io(window.location.origin);
 socket.on('connect',    () => log('Connected to server · ' + socket.id));
 socket.on('disconnect', () => log('Disconnected from server'));
 
+// ── Top-level signal relay — registered ONCE, never duplicated on reconnect ──
+socket.on('signal', ({ data }) => {
+  if (peer) peer.signal(data);
+});
+
 socket.on('peer-left', () => {
   log('⚠️ Peer disconnected.');
   // If we were in the middle of a transfer, reset
   if (incomingMeta || document.getElementById('view-progress').classList.contains('active')) {
     log('❌ Transfer interrupted.');
-    showComplete('Connection lost', 'The peer disconnected before the transfer could finish.', false);
+    showComplete('Connection lost', 'The peer disconnected before the transfer could finish.', false, false);
   } else {
     showView('lobby');
   }
@@ -863,7 +872,7 @@ document.getElementById('input-join-password').addEventListener('keydown', e => 
 });
 
 function joinRoom() {
-  const code = document.getElementById('input-code').value.trim().toUpperCase();
+  const code = PROTOCOL.sanitizeRoomCode(document.getElementById('input-code').value);
   const password = document.getElementById('input-join-password').value;
   if (!code) { log('Enter a room code first.'); return; }
   myRoomCode = code;
@@ -881,23 +890,8 @@ socket.on('join-error', ({ message }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  WEBRTC (Simplified with simple-peer)
 // ─────────────────────────────────────────────────────────────────────────────
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turns:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
-  ],
-  iceCandidatePoolSize: 10
-};
+const RTC_CONFIG = (window.__FILEDROP_CONFIG__ && window.__FILEDROP_CONFIG__.rtcConfig)
+  || PROTOCOL.buildRtcConfigFromEnv({});
 
 socket.on('room-ready', ({ code, role }) => {
   myRole = role;
@@ -913,10 +907,6 @@ socket.on('room-ready', ({ code, role }) => {
     socket.emit('signal', { code: myRoomCode, data });
   });
 
-  socket.on('signal', ({ data }) => {
-    peer.signal(data);
-  });
-
   peer.on('connect', () => {
     log('✅ Connected via WebRTC · P2P channel open');
     showView('transfer');
@@ -928,7 +918,7 @@ socket.on('room-ready', ({ code, role }) => {
     log('P2P connection closed.');
     if (incomingMeta) {
       log('❌ Transfer interrupted.');
-      showComplete('Connection lost', 'The P2P connection was closed.', false);
+      showComplete('Connection lost', 'The P2P connection was closed.', false, false);
     }
     // Remove the accept/reject modal if it's open
     const modal = document.getElementById('accept-modal');
@@ -937,7 +927,7 @@ socket.on('room-ready', ({ code, role }) => {
 
   peer.on('error', (err) => {
     log('P2P error: ' + err.message);
-    showComplete('Transfer Error', 'An error occurred during data transfer.', true);
+    showComplete('Transfer Error', 'An error occurred during data transfer.', false);
   });
 });
 
@@ -952,49 +942,44 @@ function onPeerData(data) {
     }
 
     // 2. If no file is incoming, check if it's a control message (JSON)
-    const decoder = new TextDecoder();
-    let text;
-    try {
-      text = decoder.decode(data);
-    } catch (e) {
-      // Not a string, and no file meta? Unexpected, but ignore.
-      return;
-    }
+    const payload = PROTOCOL.parseJsonMessage(data);
+    if (!payload) return;
 
-    // Try parsing as JSON
-    let payload;
-    try {
-      payload = JSON.parse(text);
-    } catch (e) {
-      // Not JSON, ignore
-      return;
-    }
-
-    if (payload.type === 'chat') {
+    if (PROTOCOL.isChatMessage(payload)) {
       appendChatMessage(payload.text, 'peer');
-    } else if (payload.type === 'file-meta') {
+    } else if (PROTOCOL.isFileMetaMessage(payload)) {
       log(`Receiver got transfer-request: "${payload.name}"`);
       
       // Create a simple custom modal for accept/reject
       const modal = document.createElement('div');
       modal.id = 'accept-modal';
-      modal.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:9999;";
-      modal.innerHTML = `
-        <div style="background:var(--card); padding:32px; border-radius:16px; width:90%; max-width:400px; text-align:center; border:1px solid var(--border);">
-          <h3 style="margin-bottom:16px;">Incoming File</h3>
-          <p style="margin-bottom:8px; font-weight:bold;">${payload.name}</p>
-          <p style="margin-bottom:24px; color:var(--muted);">${formatBytes(payload.size)}</p>
-          <div style="display:flex; gap:12px;">
-            <button id="reject-btn" class="btn btn-ghost" style="flex:1;">Reject</button>
-            <button id="accept-btn" class="btn btn-primary" style="flex:1;">Accept</button>
-          </div>
-        </div>
-      `;
+      modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999;';
+      // FIX #15: use --card-bg (--card was undefined). FIX #2: avoid innerHTML with user data.
+      const modalInner = document.createElement('div');
+      modalInner.style.cssText = 'background:var(--card-bg);padding:32px;border-radius:16px;width:90%;max-width:400px;text-align:center;border:1px solid var(--border);';
+      const mTitle = document.createElement('h3');
+      mTitle.style.marginBottom = '16px';
+      mTitle.textContent = 'Incoming File';
+      const mName = document.createElement('p');
+      mName.style.cssText = 'margin-bottom:8px;font-weight:bold;';
+      mName.textContent = payload.name; // FIX #2: textContent — no XSS
+      const mSize = document.createElement('p');
+      mSize.style.cssText = 'margin-bottom:24px;color:var(--muted);';
+      mSize.textContent = formatBytes(payload.size);
+      const mBtns = document.createElement('div');
+      mBtns.style.cssText = 'display:flex;gap:12px;';
+      const rejectBtn = document.createElement('button');
+      rejectBtn.id = 'reject-btn'; rejectBtn.className = 'btn btn-ghost'; rejectBtn.style.flex = '1'; rejectBtn.textContent = 'Reject';
+      const acceptBtn = document.createElement('button');
+      acceptBtn.id = 'accept-btn'; acceptBtn.className = 'btn btn-primary'; acceptBtn.style.flex = '1'; acceptBtn.textContent = 'Accept';
+      mBtns.appendChild(rejectBtn); mBtns.appendChild(acceptBtn);
+      modalInner.appendChild(mTitle); modalInner.appendChild(mName); modalInner.appendChild(mSize); modalInner.appendChild(mBtns);
+      modal.appendChild(modalInner);
       document.body.appendChild(modal);
 
       document.getElementById('accept-btn').onclick = () => {
         log('Accepting transfer...');
-        peer.send(JSON.stringify({ type: 'transfer-accepted' }));
+        peer.send(JSON.stringify({ type: TYPES.TRANSFER_ACCEPTED }));
         modal.remove();
         
         const safeName = sanitizeFilename(payload.name);
@@ -1008,16 +993,16 @@ function onPeerData(data) {
 
       document.getElementById('reject-btn').onclick = () => {
         log('Rejecting transfer.');
-        peer.send(JSON.stringify({ type: 'transfer-rejected' }));
+        peer.send(JSON.stringify({ type: TYPES.TRANSFER_REJECTED }));
         modal.remove();
       };
-    } else if (payload.type === 'transfer-accepted') {
+    } else if (PROTOCOL.isTransferAcceptedMessage(payload)) {
       log('Peer accepted transfer. Starting stream...');
       // If we have a pending file send, start it
       if (typeof window.startCurrentFileTransfer === 'function') {
         window.startCurrentFileTransfer();
       }
-    } else if (payload.type === 'transfer-rejected') {
+    } else if (PROTOCOL.isTransferRejectedMessage(payload)) {
       log('❌ Peer rejected the transfer.');
       showComplete('Rejected', 'The recipient declined the file transfer.', false);
     }
@@ -1032,7 +1017,7 @@ function handleBinaryChunk(data) {
 
   if (receivedBytes >= incomingMeta.size) {
     const duration = ((Date.now() - transferStart) / 1000).toFixed(1);
-    const blob = new Blob(receivedBuffers, { type: incomingMeta.type || 'application/octet-stream' });
+    const blob = new Blob(receivedBuffers, { type: incomingMeta.mime || 'application/octet-stream' }); // FIX #3
     
     log(`✅ ${incomingMeta.name} received in ${duration}s — saving…`);
     log(`Integrity Check: Expected ${incomingMeta.size} bytes | Received ${receivedBytes} bytes`);
@@ -1061,7 +1046,7 @@ function sendChatMessage() {
   const msg = input.value.trim();
   if (!msg || !peer || !peer.connected) return;
   
-  const payload = { type: 'chat', text: msg };
+  const payload = { type: TYPES.CHAT, text: msg };
   peer.send(JSON.stringify(payload));
   appendChatMessage(msg, 'me');
   input.value = '';
@@ -1101,10 +1086,10 @@ function processNextInQueue() {
   document.getElementById('queue-status').textContent = `Sending ${currentFileIdx + 1} of ${fileQueue.length}`;
 
   peer.send(JSON.stringify({ 
-    type: 'file-meta',
+    type: TYPES.FILE_META,
     name: file.name, 
     size: file.size, 
-    type_mime: file.type 
+    mime: file.type   // FIX #3: was 'type_mime', receiver reads 'payload.mime'
   }));
 
   transferStart = Date.now();
@@ -1262,7 +1247,8 @@ function autoDownload(blob, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // FIX #13: defer revoke so browser has time to start the download
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
   log('✅ Saved to Downloads folder.');
 }
 
@@ -1300,10 +1286,11 @@ function updateProgress(done, total) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  COMPLETE UI
 // ─────────────────────────────────────────────────────────────────────────────
-function showComplete(title, sub, canSendAnother) {
+function showComplete(title, sub, canSendAnother, isSuccess = true) {
   document.getElementById('complete-title').textContent = title;
   document.getElementById('complete-sub').textContent   = sub;
   document.getElementById('btn-send-another').style.display = canSendAnother ? '' : 'none';
+  document.getElementById('complete-icon').textContent = isSuccess ? '✅' : '❌'; // FIX #10
   showView('complete');
 }
 

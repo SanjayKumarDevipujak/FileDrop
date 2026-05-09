@@ -35,7 +35,7 @@ Filedrop is a high-performance, secure, and decentralized peer-to-peer (P2P) fil
 ## 🚀 Quick Start
 
 ### Web Client
-Visit the live version: [https://filedrop-p2p.onrender.com](https://filedrop-om51.onrender.com) (or your deployment URL).
+Visit your deployed URL (example: [https://filedrop-om51.onrender.com](https://filedrop-om51.onrender.com)).
 
 ### CLI Installation
 ```bash
@@ -51,6 +51,26 @@ npm link
 ### CLI Usage
 - **To Send**: `filedrop send "path/to/your/file.zip"`
 - **To Receive**: `filedrop receive ROOM-CODE`
+
+### Configuration (Recommended for Production)
+Set these environment variables on your server and CLI runtime:
+
+- `SIGNALING_SERVER` (CLI): signaling server base URL.
+- `FILEDROP_ALLOWED_ORIGINS` (server): comma-separated allowed web origins for Socket.IO CORS.
+- `FILEDROP_STUN_SERVERS`: comma-separated STUN URLs.
+- `FILEDROP_TURN_URLS`: comma-separated TURN URLs.
+- `FILEDROP_TURN_USERNAME`: TURN username.
+- `FILEDROP_TURN_CREDENTIAL`: TURN credential.
+
+Example:
+```bash
+FILEDROP_ALLOWED_ORIGINS=https://yourdomain.com,http://localhost:3000
+FILEDROP_STUN_SERVERS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+FILEDROP_TURN_URLS=turn:turn.example.com:3478,turns:turn.example.com:5349?transport=tcp
+FILEDROP_TURN_USERNAME=your-user
+FILEDROP_TURN_CREDENTIAL=your-pass
+SIGNALING_SERVER=https://yourdomain.com
+```
 
 ---
 
