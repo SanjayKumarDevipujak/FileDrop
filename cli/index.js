@@ -19,8 +19,8 @@ const readline = require('readline');
 
 const SERVER_URL = process.env.SIGNALING_SERVER || 'https://filedrop-om51.onrender.com';
 const CHUNK_SIZE = 262144; // 256KB - Ultra-fast throughput
-const MAX_BUFFERED_AMOUNT = 67108864; // 64MB - Keep the pipe saturated
-const MIN_BUFFERED_AMOUNT = 16777216; // 16MB - Resume threshold
+const MAX_BUFFERED_AMOUNT = 16777216; // 16MB - Safer limit for send queue
+const MIN_BUFFERED_AMOUNT = 4194304; // 4MB - Resume threshold
 const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },

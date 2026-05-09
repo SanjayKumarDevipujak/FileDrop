@@ -742,8 +742,8 @@ let receivedBytes   = 0;
 let transferStart   = 0;
 
 const CHUNK_SIZE = 262144; // 256 KB — Ultra-fast throughput
-const MAX_BUFFERED_AMOUNT = 67108864; // 64 MB - Massive throughput for high-speed networks
-const MIN_BUFFERED_AMOUNT = 16777216; // 16 MB - Resume threshold to keep the flow aggressive
+const MAX_BUFFERED_AMOUNT = 16777216; // 16 MB - Safer limit for browser send queue
+const MIN_BUFFERED_AMOUNT = 4194304; // 4 MB - Resume threshold to keep the flow aggressive
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  VIEW HELPER
@@ -1125,8 +1125,19 @@ function processNextInQueue() {
       try {
         const buf = await slice.arrayBuffer();
         if (!peer || !peer.connected) return;
-        peer.send(buf);
-        updateProgress(offset, file.size);
+        
+        try {
+          peer.send(buf);
+          updateProgress(offset, file.size);
+        } catch (sendErr) {
+          if (sendErr.name === 'OperationError' || sendErr.message.includes('full')) {
+            // Buffer overflowed despite our check. Back off and retry this chunk.
+            offset -= slice.size; 
+            setTimeout(window.startCurrentFileTransfer, 50);
+            return;
+          }
+          throw sendErr;
+        }
       } catch (err) {
         log('Error reading file: ' + err.message);
         showComplete('Error', 'Failed to read file for transfer.', true);
