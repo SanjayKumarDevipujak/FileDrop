@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 const { program } = require('commander');
 const io = require('socket.io-client');
-const chalk = require('chalk');
-const boxen = require('boxen');
+let chalk = require('chalk');
+let boxen = require('boxen');
+
+// Handle ESM-to-CJS default export wrapping in newer Node versions
+if (chalk.default) chalk = chalk.default;
+if (boxen.default) boxen = boxen.default;
+
 const qrcode = require('qrcode-terminal');
 const cliProgress = require('cli-progress');
 const fs = require('fs-extra');

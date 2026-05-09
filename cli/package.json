@@ -15,7 +15,6 @@
   "type": "commonjs",
   "dependencies": {
     "@koush/wrtc": "^0.5.3",
-    "axios": "^1.16.0",
     "boxen": "^5.1.2",
     "chalk": "^4.1.2",
     "cli-progress": "^3.12.0",
