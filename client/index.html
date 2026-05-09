@@ -743,11 +743,21 @@ let receivedBuffers = [];
 let receivedBytes   = 0;
 let transferStart   = 0;
 
+// Streaming receive state (avoids buffering huge files in RAM)
+let receiveWritable = null;
+let receiveWriteChain = Promise.resolve();
+let receiveUsingStream = false;
+
+const LARGE_RECEIVE_THRESHOLD = 64 * 1024 * 1024; // 64 MB
+
 const CHUNK_SIZE = 262144; // 256 KB — Ultra-fast throughput
 const MAX_BUFFERED_AMOUNT = 16777216; // 16 MB - Safer limit for browser send queue
 const MIN_BUFFERED_AMOUNT = 4194304; // 4 MB - Resume threshold to keep the flow aggressive
 const PROTOCOL = window.FiledropProtocol;
 const TYPES = PROTOCOL.TYPES;
+
+// Receiver-driven progress ACK (keeps sender/receiver % identical)
+let lastProgressAckAt = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  VIEW HELPER
@@ -989,6 +999,13 @@ function onPeerData(data) {
         transferStart   = Date.now();
         log('⬇ Receiving: ' + incomingMeta.name + ' (' + formatBytes(incomingMeta.size) + ')');
         startProgress(incomingMeta.name, incomingMeta.size, 'Receiving');
+
+        // Prefer streaming to disk for large files when supported.
+        prepareReceiveSink(incomingMeta).catch((err) => {
+          log('⚠️ Stream-to-disk unavailable: ' + (err && err.message ? err.message : String(err)));
+          receiveUsingStream = false;
+          receiveWritable = null;
+        });
       };
 
       document.getElementById('reject-btn').onclick = () => {
@@ -1005,27 +1022,114 @@ function onPeerData(data) {
     } else if (PROTOCOL.isTransferRejectedMessage(payload)) {
       log('❌ Peer rejected the transfer.');
       showComplete('Rejected', 'The recipient declined the file transfer.', false);
+    } else if (PROTOCOL.isTransferProgressMessage && PROTOCOL.isTransferProgressMessage(payload)) {
+      // Update sender progress based on receiver bytes (prevents mismatch).
+      if (payload && typeof payload.received === 'number' && typeof payload.total === 'number') {
+        updateProgress(payload.received, payload.total);
+      }
     }
+  }
+}
+
+async function prepareReceiveSink(meta) {
+  receiveUsingStream = false;
+  receiveWritable = null;
+  receiveWriteChain = Promise.resolve();
+
+  // For smaller files, buffering into Blob is fine and enables simple save flows.
+  if (meta.size < LARGE_RECEIVE_THRESHOLD) return;
+
+  // Streaming requires File System Access API (Chromium-based browsers).
+  if (!('showSaveFilePicker' in window)) {
+    log('⚠️ Your browser cannot stream-save large files. For best results, use Chrome/Edge or the CLI.');
+    return;
+  }
+
+  // Large file + streaming supported: prompt once and then write chunks incrementally.
+  const ext = meta.name.includes('.') ? '.' + meta.name.split('.').pop() : '';
+  const handle = await window.showSaveFilePicker({
+    suggestedName: meta.name,
+    types: [{ description: 'File', accept: { [meta.mime || 'application/octet-stream']: ext ? [ext] : [] } }],
+  });
+
+  receiveWritable = await handle.createWritable();
+  receiveUsingStream = true;
+  log('✅ Stream-to-disk enabled (large file). Writing directly to your chosen location.');
+}
+
+function queueStreamWrite(chunk) {
+  receiveWriteChain = receiveWriteChain.then(async () => {
+    if (!receiveWritable) return;
+    await receiveWritable.write(chunk);
+  });
+  return receiveWriteChain;
+}
+
+async function finalizeStreamReceive(meta) {
+  try {
+    await receiveWriteChain;
+    if (receiveWritable) await receiveWritable.close();
+    log('✅ File stream closed.');
+  } finally {
+    receiveWritable = null;
+    receiveUsingStream = false;
+    receiveWriteChain = Promise.resolve();
   }
 }
 
 function handleBinaryChunk(data) {
   if (!incomingMeta) return;
-  receivedBuffers.push(data);
+
+  // If streaming is enabled, write to disk incrementally; otherwise buffer in memory.
+  if (receiveUsingStream && receiveWritable) {
+    queueStreamWrite(data);
+  } else {
+    receivedBuffers.push(data);
+  }
+
   receivedBytes += data.byteLength || data.length;
   updateProgress(receivedBytes, incomingMeta.size);
 
+  // Push receiver progress to sender (throttled).
+  const now = Date.now();
+  if (peer && peer.connected && now - lastProgressAckAt > 120) {
+    lastProgressAckAt = now;
+    try {
+      peer.send(JSON.stringify({ type: TYPES.TRANSFER_PROGRESS, received: receivedBytes, total: incomingMeta.size }));
+    } catch {}
+  }
+
   if (receivedBytes >= incomingMeta.size) {
     const duration = ((Date.now() - transferStart) / 1000).toFixed(1);
-    const blob = new Blob(receivedBuffers, { type: incomingMeta.mime || 'application/octet-stream' }); // FIX #3
-    
-    log(`✅ ${incomingMeta.name} received in ${duration}s — saving…`);
+
+    log(`✅ ${incomingMeta.name} received in ${duration}s`);
     log(`Integrity Check: Expected ${incomingMeta.size} bytes | Received ${receivedBytes} bytes`);
+
+    if (receiveUsingStream) {
+      showComplete('File received!', `${incomingMeta.name} is ready. (Took ${duration}s)`, true);
+      finalizeStreamReceive(incomingMeta).catch((err) => {
+        log('❌ Failed finishing streamed save: ' + (err && err.message ? err.message : String(err)));
+      });
+      // Final ACK so sender UI hits 100%.
+      try {
+        peer.send(JSON.stringify({ type: TYPES.TRANSFER_PROGRESS, received: incomingMeta.size, total: incomingMeta.size }));
+      } catch {}
+      incomingMeta = null;
+      receivedBuffers = [];
+      return;
+    }
+
+    const blob = new Blob(receivedBuffers, { type: incomingMeta.mime || 'application/octet-stream' }); // FIX #3
     log(`Receiver saving file: "${incomingMeta.name}"`);
-    
+
     showComplete('File received!', `${incomingMeta.name} is ready. (Took ${duration}s)`, true);
     downloadFile(blob, incomingMeta.name);
+    // Final ACK so sender UI hits 100%.
+    try {
+      peer.send(JSON.stringify({ type: TYPES.TRANSFER_PROGRESS, received: incomingMeta.size, total: incomingMeta.size }));
+    } catch {}
     incomingMeta = null;
+    receivedBuffers = [];
   }
 }
 

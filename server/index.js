@@ -13,10 +13,32 @@ const ALLOWED_ORIGINS = (process.env.FILEDROP_ALLOWED_ORIGINS || '')
   .split(',')
   .map((v) => v.trim())
   .filter(Boolean);
+
+// Render commonly provides this; use it as safe default when no explicit allowlist.
+const DEFAULT_PUBLIC_ORIGIN =
+  process.env.PUBLIC_ORIGIN
+  || process.env.RENDER_EXTERNAL_URL
+  || '';
+
+function isOriginAllowed(origin) {
+  // Non-browser clients (no Origin) like the CLI should still work.
+  if (!origin) return true;
+
+  const normalized = String(origin).trim();
+
+  // Explicit allowlist wins.
+  if (ALLOWED_ORIGINS.length) return ALLOWED_ORIGINS.includes(normalized);
+
+  // Safe default: same Render public URL only (if known).
+  if (DEFAULT_PUBLIC_ORIGIN) return normalized === DEFAULT_PUBLIC_ORIGIN;
+
+  // Last resort: allow (keeps local dev working if no envs are set).
+  return true;
+}
 const server = http.createServer(app);
 const io     = new Server(server, {
   cors: {
-    origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : true,
+    origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
     methods: ['GET', 'POST']
   }
 });
@@ -79,7 +101,11 @@ app.get('/config.js', (req, res) => {
     rtcConfig: RTC_CONFIG
   };
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
   res.send(`window.__FILEDROP_CONFIG__ = ${JSON.stringify(clientConfig)};`);
+});
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true });
 });
 app.use('/protocol', express.static(path.join(__dirname, '..', 'protocol')));
 app.use(express.static(path.join(__dirname, '..', 'client')));

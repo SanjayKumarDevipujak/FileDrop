@@ -15,13 +15,16 @@ const path        = require('path');
 const Peer        = require('simple-peer');
 const wrtc        = require('@koush/wrtc');
 const readline    = require('readline');
+const crypto      = require('crypto');
 const {
   TYPES,
   sanitizeRoomCode,
   parseJsonMessage,
   isFileMetaMessage,
+  isFileHashMessage,
   isTransferAcceptedMessage,
   isTransferRejectedMessage,
+  isTransferProgressMessage,
   buildRtcConfigFromEnv
 } = require('../protocol/messages');
 
@@ -81,6 +84,10 @@ program
 
     const socket = io(SERVER_URL, { reconnectionAttempts: 5 });
     let peer = null;
+    let ackedBytes = 0;
+    let progressBar = null;
+    let startTime = 0;
+    let senderHashHex = null;
 
     // ── Top-level signal relay — never duplicated ─────────────────────────────
     socket.on('signal', ({ data }) => {
@@ -133,6 +140,16 @@ program
         } else if (isTransferRejectedMessage(payload)) {
           debug('Peer rejected the transfer.', 'error');
           process.exit(0);
+        } else if (isTransferProgressMessage(payload)) {
+          ackedBytes = payload.received;
+          if (progressBar) {
+            const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+            const speed   = (ackedBytes / 1048576 / elapsed).toFixed(2) + ' MB/s';
+            progressBar.update(Math.ceil(ackedBytes / CHUNK_SIZE), { speed });
+          }
+        } else if (isFileHashMessage(payload)) {
+          senderHashHex = payload.hash;
+          debug(`Receiver verified hash: ${payload.algo} ${payload.hash.slice(0, 12)}…`, 'success');
         }
       });
 
@@ -155,7 +172,7 @@ program
     // ── Stream-based file sender (async I/O, no blocking) ─────────────────────
     function startSending() {
       const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-      const progressBar = new cliProgress.SingleBar({
+      progressBar = new cliProgress.SingleBar({
         format: 'Sending |' + chalk.cyan('{bar}') + '| {percentage}% | {value}/{total} chunks | {speed}',
         barCompleteChar: '\u2588', barIncompleteChar: '\u2591', hideCursor: true
       }, cliProgress.Presets.shades_classic);
@@ -163,14 +180,17 @@ program
       progressBar.start(totalChunks, 0, { speed: '0 MB/s' });
 
       const readStream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+      const hash = crypto.createHash('sha256');
       let offset    = 0;
-      let startTime = Date.now();
+      startTime = Date.now();
       let paused    = false;
 
       const getBuffered = () => (peer && peer._channel ? peer._channel.bufferedAmount : 0);
 
       readStream.on('data', (chunk) => {
         if (!peer) { readStream.destroy(); return; }
+
+        hash.update(chunk);
 
         // Back-pressure: pause stream if send buffer is filling up
         if (getBuffered() > MAX_BUFFERED_AMOUNT) {
@@ -187,19 +207,23 @@ program
 
         peer.send(chunk);
         offset += chunk.length;
-
-        const elapsed = (Date.now() - startTime) / 1000 || 0.001;
-        const speed   = (offset / 1048576 / elapsed).toFixed(2) + ' MB/s';
-        progressBar.update(Math.ceil(offset / CHUNK_SIZE), { speed });
       });
 
       readStream.on('end', () => {
+        const localHashHex = hash.digest('hex');
+
         // Wait for send buffer to fully drain before announcing completion
         const waitDrain = setInterval(() => {
           if (getBuffered() === 0) {
             clearInterval(waitDrain);
             progressBar.stop();
+            // Tell receiver expected hash (receiver will verify and reply back).
+            try {
+              peer.send(JSON.stringify({ type: TYPES.FILE_HASH, algo: 'sha256', hash: localHashHex }));
+            } catch {}
+
             debug(`Transfer complete! Sent ${fileSize} bytes.`, 'success');
+            debug(`SHA-256: ${localHashHex}`, 'info');
             setTimeout(() => process.exit(0), 1000);
           }
         }, 100);
@@ -231,6 +255,11 @@ program
     let writeStream = null;
     let progressBar = null;
     let startTime   = 0;
+    let lastProgressSentAt = 0;
+    let hash = null;
+    let expectedHashHex = null;
+    let localHashHex = null;
+    let hashVerified = false;
 
     // ── Top-level signal relay ────────────────────────────────────────────────
     socket.on('signal', ({ data }) => {
@@ -303,6 +332,7 @@ program
 
           debug(`Saving to: "${savePath}"`, 'info');
           writeStream = fs.createWriteStream(savePath);
+          hash = crypto.createHash('sha256');
 
           progressBar = new cliProgress.SingleBar({
             format: 'Receiving |' + chalk.green('{bar}') + '| {percentage}% | {value}/{total} chunks | {speed}',
@@ -311,9 +341,31 @@ program
           progressBar.start(Math.ceil(fileMeta.size / CHUNK_SIZE), 0, { speed: '0 MB/s' });
 
         } else {
-          // ── Binary chunk ────────────────────────────────────────────────────
+          // ── Control message (hash) or Binary chunk ─────────────────────────
+          const maybeControl = parseJsonMessage(data);
+          if (maybeControl && isFileHashMessage(maybeControl)) {
+            expectedHashHex = maybeControl.hash;
+            if (localHashHex) {
+              hashVerified = (expectedHashHex === localHashHex);
+              debug(`SHA-256 verified: ${hashVerified ? 'OK' : 'MISMATCH'}`, hashVerified ? 'success' : 'error');
+            } else {
+              debug('Received expected SHA-256 from sender. Will verify at end…', 'info');
+            }
+            return;
+          }
+
           writeStream.write(data);
+          hash.update(data);
           receivedSize += data.length || data.byteLength || 0;
+
+          // Send receiver-driven progress to keep sender % identical.
+          const now = Date.now();
+          if (now - lastProgressSentAt > 120) {
+            lastProgressSentAt = now;
+            try {
+              peer.send(JSON.stringify({ type: TYPES.TRANSFER_PROGRESS, received: receivedSize, total: fileMeta.size }));
+            } catch {}
+          }
 
           const elapsed = (Date.now() - startTime) / 1000 || 0.001;
           const speed   = (receivedSize / 1048576 / elapsed).toFixed(2) + ' MB/s';
@@ -324,6 +376,19 @@ program
 
             // FIX: wait for writeStream to fully flush before stat-checking
             writeStream.end(() => {
+              localHashHex = hash.digest('hex');
+              if (expectedHashHex) {
+                hashVerified = (expectedHashHex === localHashHex);
+                debug(`SHA-256 verified: ${hashVerified ? 'OK' : 'MISMATCH'}`, hashVerified ? 'success' : 'error');
+              } else {
+                debug(`SHA-256 (local): ${localHashHex}`, 'info');
+              }
+
+              // Final progress ping to force sender UI to 100%.
+              try {
+                peer.send(JSON.stringify({ type: TYPES.TRANSFER_PROGRESS, received: fileMeta.size, total: fileMeta.size }));
+              } catch {}
+
               const finalStats = fs.statSync(fileMeta.savePath);
               const ok = finalStats.size === fileMeta.size;
               debug(`Saved: ${fileMeta.name}`, ok ? 'success' : 'error');
@@ -331,7 +396,8 @@ program
                 `Integrity: expected ${fileMeta.size} bytes | saved ${finalStats.size} bytes`,
                 ok ? 'success' : 'error'
               );
-              setTimeout(() => process.exit(ok ? 0 : 1), 500);
+              const exitOk = ok && (!expectedHashHex || hashVerified);
+              setTimeout(() => process.exit(exitOk ? 0 : 1), 500);
             });
           }
         }

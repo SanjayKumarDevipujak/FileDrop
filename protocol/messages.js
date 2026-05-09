@@ -1,8 +1,10 @@
 (function initFiledropProtocol(globalScope) {
   const TYPES = Object.freeze({
     FILE_META: 'file-meta',
+    FILE_HASH: 'file-hash',
     TRANSFER_ACCEPTED: 'transfer-accepted',
     TRANSFER_REJECTED: 'transfer-rejected',
+    TRANSFER_PROGRESS: 'transfer-progress',
     CHAT: 'chat'
   });
 
@@ -41,6 +43,25 @@
       && typeof payload.text === 'string'
       && payload.text.length > 0
       && payload.text.length <= 2000;
+  }
+
+  function isTransferProgressMessage(payload) {
+    return isObject(payload)
+      && payload.type === TYPES.TRANSFER_PROGRESS
+      && Number.isFinite(payload.received)
+      && payload.received >= 0
+      && Number.isFinite(payload.total)
+      && payload.total > 0
+      && payload.received <= payload.total;
+  }
+
+  function isFileHashMessage(payload) {
+    return isObject(payload)
+      && payload.type === TYPES.FILE_HASH
+      && (payload.algo === 'sha256')
+      && typeof payload.hash === 'string'
+      && payload.hash.length >= 32
+      && payload.hash.length <= 128;
   }
 
   function parseJsonMessage(data) {
@@ -109,8 +130,10 @@
     sanitizeRoomCode,
     parseJsonMessage,
     isFileMetaMessage,
+    isFileHashMessage,
     isTransferAcceptedMessage,
     isTransferRejectedMessage,
+    isTransferProgressMessage,
     isChatMessage,
     buildRtcConfigFromEnv
   };

@@ -56,6 +56,7 @@ npm link
 Set these environment variables on your server and CLI runtime:
 
 - `SIGNALING_SERVER` (CLI): signaling server base URL.
+- `PUBLIC_ORIGIN` (server): your public web origin (example: `https://filedrop-om51.onrender.com`). If not set on Render, `RENDER_EXTERNAL_URL` is used.
 - `FILEDROP_ALLOWED_ORIGINS` (server): comma-separated allowed web origins for Socket.IO CORS.
 - `FILEDROP_STUN_SERVERS`: comma-separated STUN URLs.
 - `FILEDROP_TURN_URLS`: comma-separated TURN URLs.
