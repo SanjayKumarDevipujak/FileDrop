@@ -26,7 +26,7 @@ const {
   isTransferRejectedMessage,
   isTransferProgressMessage,
   buildRtcConfigFromEnv
-} = require('../protocol/messages');
+} = require('./protocol/messages');
 
 const SERVER_URL         = process.env.SIGNALING_SERVER || 'https://filedrop-om51.onrender.com';
 const CHUNK_SIZE         = 262144;   // 256 KB
