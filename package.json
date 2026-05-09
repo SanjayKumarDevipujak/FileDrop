@@ -1,0 +1,16 @@
+{
+  "name": "filedrop",
+  "version": "1.0.0",
+  "description": "P2P file sharing with WebRTC",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.1",
+    "socket.io": "^4.8.3"
+  },
+  "author": "SanjayKumar",
+  "license": "ISC"
+}

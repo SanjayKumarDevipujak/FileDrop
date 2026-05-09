@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Filedrop — Fast. Private. No account needed.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0a0a0a;
+      --card-bg:    #111111;
+      --accent:     #6366f1;
+      --accent-dim: rgba(99,102,241,0.15);
+      --accent-hover: #4f52d4;
+      --text:       #ffffff;
+      --muted:      #888888;
+      --border:     #222222;
+      --radius:     14px;
+      --radius-sm:  9px;
+    }
+
+    html, body { height: 100%; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px 36px 36px;
+      width: 100%;
+      max-width: 800px; /* Increased for desktop */
+      transition: max-width 0.3s ease;
+    }
+
+    /* ── Lobby Layout ── */
+    #view-lobby .lobby-sections {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    @media (min-width: 768px) {
+      #view-lobby .lobby-sections {
+        flex-direction: row;
+        align-items: stretch;
+      }
+      #view-lobby .lobby-sections > div {
+        flex: 1;
+      }
+      #view-lobby .lobby-divider {
+        display: none;
+      }
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 32px;
+    }
+    .logo-area { flex: 1; }
+    .logo {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    .tagline {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .settings-btn {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      cursor: pointer;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .settings-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    /* ── Views (show/hide) ── */
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      padding: 12px 20px;
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(0.97); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      width: 100%;
+      box-shadow: 0 0 24px rgba(99,102,241,0.25);
+    }
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 0 32px rgba(99,102,241,0.4); }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      flex-shrink: 0;
+    }
+    .btn-outline:hover { background: var(--accent-dim); }
+
+    .btn-ghost {
+      background: #1c1c1c;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-size: 13px;
+      padding: 9px 16px;
+    }
+    .btn-ghost:hover { background: #242424; color: var(--text); }
+
+    /* ── Divider ── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 20px 0;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Input ── */
+    .input {
+      font-family: inherit;
+      font-size: 14px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color 0.15s;
+      width: 100%;
+    }
+    .input:focus { border-color: var(--accent); }
+    .input.code-input {
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .input::placeholder { color: var(--muted); letter-spacing: normal; font-weight: 400; }
+
+    /* ── Join row ── */
+    .join-row { display: flex; gap: 8px; }
+    .join-row .input { flex: 1; min-width: 0; }
+
+    /* ── Room code display ── */
+    .room-code-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .room-code-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .room-code-value {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: var(--accent);
+    }
+    .room-code-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    /* ── Waiting pulse ── */
+    .waiting-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 1.8s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.3; transform: scale(0.6); }
+    }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 16px;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .drop-zone-icon { font-size: 36px; margin-bottom: 12px; }
+    .drop-zone-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .drop-zone-sub { font-size: 13px; color: var(--muted); }
+
+    /* ── Progress ── */
+    .progress-file-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .progress-track {
+      background: var(--border);
+      border-radius: 999px;
+      height: 6px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #818cf8);
+      border-radius: 999px;
+      width: 0%;
+      transition: width 0.2s ease;
+    }
+    .progress-stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── Complete ── */
+    .complete-icon { font-size: 40px; margin-bottom: 12px; }
+    .complete-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+    .complete-sub { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+    .complete-actions { display: flex; gap: 8px; }
+
+    /* ── Status log ── */
+    .log-header {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-top: 28px;
+      margin-bottom: 8px;
+    }
+    .log-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      height: 120px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .log-line {
+      font-size: 12px;
+      color: #999;
+      line-height: 1.7;
+      display: flex;
+      gap: 8px;
+    }
+    .log-time { color: #555; flex-shrink: 0; }
+
+    /* ── Connected badge ── */
+    .peer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #4ade80;
+      background: rgba(74,222,128,0.1);
+      border: 1px solid rgba(74,222,128,0.2);
+      border-radius: 999px;
+      padding: 4px 12px;
+      margin-bottom: 20px;
+    }
+    .peer-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; }
+
+    /* ── Chat ── */
+    .chat-container {
+      margin-top: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 200px;
+    }
+    .chat-messages {
+      flex: 1;
+      padding: 10px;
+      overflow-y: auto;
+      font-size: 13px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .chat-msg {
+      padding: 6px 10px;
+      border-radius: 8px;
+      max-width: 85%;
+      word-break: break-word;
+    }
+    .chat-msg.me {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+    }
+    .chat-msg.peer {
+      align-self: flex-start;
+      background: var(--border);
+      color: var(--text);
+    }
+    .chat-input-row {
+      display: flex;
+      border-top: 1px solid var(--border);
+      background: var(--card-bg);
+    }
+    .chat-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 13px;
+      outline: none;
+    }
+    .chat-send {
+      background: transparent;
+      color: var(--accent);
+      border: none;
+      padding: 0 14px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .chat-send:hover { color: var(--accent-hover); }
+
+    /* ── QR Code ── */
+    .qr-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .qr-img {
+      width: 148px;
+      height: 148px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 6px;
+      display: block;
+    }
+    .qr-hint { font-size: 11px; color: var(--muted); }
+
+    /* ── Save-pref Modal ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 24px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.active { opacity: 1; pointer-events: all; }
+    .modal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 28px;
+      max-width: 380px;
+      width: 100%;
+      transform: scale(0.95);
+      transition: transform 0.2s;
+    }
+    .modal-overlay.active .modal-card { transform: scale(1); }
+    .modal-icon { font-size: 32px; margin-bottom: 12px; }
+    .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+    .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+    .modal-actions { display: flex; flex-direction: column; gap: 10px; }
+    .modal-note { font-size: 11px; color: var(--muted); text-align: center; margin-top: 10px; }
+
+    /* ── Responsive ── */
+    @media (max-width: 480px) {
+      body { align-items: flex-start; padding: 0; }
+      .card { border-radius: 0; border-left: none; border-right: none; padding: 28px 20px; max-width: 100%; }
+      .room-code-value { font-size: 22px; letter-spacing: 3px; }
+    }
+
+    /* ── CLI Section ── */
+    .cli-promo {
+      margin-top: 40px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .cli-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .cli-title svg { color: var(--accent); }
+    .cli-code-block {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 12px;
+      color: #4ade80;
+      text-align: left;
+      position: relative;
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .cli-code-block::before {
+      content: 'Terminal';
+      position: absolute;
+      top: 0;
+      right: 12px;
+      font-size: 10px;
+      color: #444;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .cli-help-link {
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.15s;
+      cursor: pointer;
+    }
+    .cli-help-link:hover { color: var(--accent); }
+
+    .help-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 200;
+      padding: 40px 20px;
+      overflow-y: auto;
+    }
+    .help-modal.active { display: block; }
+    .help-content {
+      max-width: 600px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+    }
+    .help-cmd { margin-bottom: 24px; }
+    .help-cmd-name { font-weight: 700; color: var(--accent); margin-bottom: 4px; font-family: monospace; }
+    .help-cmd-desc { font-size: 14px; color: var(--muted); line-height: 1.5; }
+  </style>
+</head>
+<body>
+<div class="card">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo-area">
+      <div class="logo">Filedrop</div>
+      <div class="tagline">Fast. Private. No account needed.</div>
+    </div>
+    <button id="btn-settings" class="settings-btn" title="Settings">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
+  </div>
+
+  <!-- ── VIEW: LOBBY ── -->
+  <div id="view-lobby" class="view active">
+    <div class="lobby-sections">
+      <!-- Create Section -->
+      <div>
+        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--muted);">Host a Room</h3>
+        <button id="btn-create" class="btn btn-primary">Create Room</button>
+        <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
+          <input id="input-create-password" class="input" type="password" placeholder="Optional Room Password" style="font-size: 12px; padding: 8px 12px;" />
+        </div>
+      </div>
+      
+      <div class="divider lobby-divider">or</div>
+      
+      <!-- Join Section -->
+      <div>
+        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--muted);">Join a Room</h3>
+        <div class="join-row" style="margin-bottom: 8px;">
+          <input id="input-code" class="input code-input" type="text" placeholder="WORD-000" maxlength="10" autocomplete="off" spellcheck="false" />
+          <button id="btn-join" class="btn btn-outline">Join</button>
+        </div>
+        <input id="input-join-password" class="input" type="password" placeholder="Room Password (if protected)" style="font-size: 12px; padding: 8px 12px;" />
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VIEW: WAITING (creator, before peer joins) ── -->
+  <div id="view-waiting" class="view">
+    <div class="room-code-box">
+      <div class="room-code-label">Your Room Code</div>
+      <div class="room-code-value" id="display-code">—</div>
+      <div class="room-code-hint">Share this code or let the other person scan the QR</div>
+    </div>
+    <div class="qr-box">
+      <img id="qr-img" class="qr-img" src="" alt="QR Code" />
+      <div class="qr-hint">Scan to auto-join from another device</div>
+    </div>
+    <div class="waiting-row">
+      <div class="pulse"></div>
+      <span>Waiting for someone to join…</span>
+    </div>
+    <button id="btn-copy" class="btn btn-ghost" style="width:100%">Copy Room Code</button>
+  </div>
+
+  <!-- ── VIEW: CONNECTING (joiner, before WebRTC ready) ── -->
+  <div id="view-connecting" class="view">
+    <div class="waiting-row">
+      <div class="pulse"></div>
+      <span>Connecting to room <strong id="connecting-code" style="color:var(--text)"></strong>…</span>
+    </div>
+  </div>
+
+  <!-- ── VIEW: TRANSFER (WebRTC connected, drop zone) ── -->
+  <div id="view-transfer" class="view">
+    <div class="peer-badge"><div class="peer-badge-dot"></div> Peer connected</div>
+    <div class="drop-zone" id="drop-zone">
+      <div class="drop-zone-icon">📂</div>
+      <div class="drop-zone-title">Drop files to send</div>
+      <div class="drop-zone-sub">or click to browse</div>
+    </div>
+    <input type="file" id="file-input" style="display:none" multiple />
+
+    <div class="chat-container">
+      <div class="chat-messages" id="chat-messages">
+        <div style="color:var(--muted); font-size:11px; text-align:center; margin-top:4px;">Direct chat enabled</div>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" class="chat-input" placeholder="Type a message..." autocomplete="off" />
+        <button id="chat-send" class="chat-send">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VIEW: PROGRESS ── -->
+  <div id="view-progress" class="view">
+    <div id="queue-status" style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--accent); margin-bottom: 8px;">Sending 1 of 1</div>
+    <div class="progress-file-name" id="progress-filename">—</div>
+    <div class="progress-meta">
+      <span id="progress-size">—</span>
+      <span id="progress-direction">—</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-bar"></div>
+    </div>
+    <div class="progress-stats">
+      <span id="progress-percent">0%</span>
+      <span id="progress-speed">— MB/s</span>
+    </div>
+    <button id="btn-progress-back" class="btn btn-ghost" style="width:100%; margin-top: 20px;">Back to Chat</button>
+  </div>
+
+  <!-- ── VIEW: COMPLETE ── -->
+  <div id="view-complete" class="view" style="text-align:center">
+    <div class="complete-icon" id="complete-icon">✅</div>
+    <div class="complete-title" id="complete-title">Transfer complete!</div>
+    <div class="complete-sub" id="complete-sub">The file was transferred successfully.</div>
+    <div class="complete-actions" style="justify-content:center">
+      <button id="btn-send-another" class="btn btn-primary" style="width:auto;padding:12px 28px">Send Files</button>
+      <button id="btn-back-to-chat" class="btn btn-outline" style="width:auto;padding:12px 28px">Back to Chat</button>
+      <button id="btn-new-room" class="btn btn-ghost">New Room</button>
+    </div>
+  </div>
+
+  <!-- ── STATUS LOG (always visible) ── -->
+  <div class="log-header">Activity</div>
+  <div class="log-box" id="log-box"></div>
+
+  <!-- ── CLI PROMO ── -->
+  <div class="cli-promo">
+    <div class="cli-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+      Try Filedrop CLI
+    </div>
+    <div class="cli-code-block">
+      npm install -g filedrop-p2p<br>
+      filedrop send ./my-file.zip
+    </div>
+    <a id="open-help" class="cli-help-link">View all commands & help</a>
+  </div>
+
+</div>
+
+<!-- ── HELP MODAL ── -->
+<div id="help-modal" class="help-modal">
+  <div class="help-content">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+      <h2 style="font-size:20px; font-weight:700;">CLI Commands</h2>
+      <button id="close-help" class="btn btn-ghost" style="padding:6px 12px;">Close</button>
+    </div>
+    
+    <div class="help-cmd">
+      <div class="help-cmd-name">filedrop send &lt;file&gt;</div>
+      <div class="help-cmd-desc">Starts a room and prepares to send the specified file. Generates a room code and QR code.</div>
+    </div>
+    
+    <div class="help-cmd">
+      <div class="help-cmd-name">filedrop receive &lt;code&gt;</div>
+      <div class="help-cmd-desc">Joins a room using the provided code to receive a file directly to your current directory.</div>
+    </div>
+
+    <div class="help-cmd">
+      <div class="help-cmd-name">filedrop --help</div>
+      <div class="help-cmd-desc">Shows all available commands and options.</div>
+    </div>
+
+    <div style="margin-top:32px; padding-top:24px; border-top:1px solid var(--border); font-size:13px; color:var(--muted); line-height:1.6;">
+      <p><strong>Note:</strong> The CLI version currently uses a signaling server to establish P2P connections. For best results, ensure both devices have internet access.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ── SAVE PREFERENCE MODAL ── -->
+<div class="modal-overlay" id="save-pref-modal">
+  <div class="modal-card">
+    <div class="modal-icon">💾</div>
+    <div class="modal-title" id="modal-title">Where should received files be saved?</div>
+    <div class="modal-sub" id="modal-sub">Choose how Filedrop handles files you receive. Your browser may still prompt you depending on its own settings.</div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="pref-auto">Auto-save to Downloads</button>
+      <button class="btn btn-ghost" id="pref-pick">Ask me where to save each time</button>
+      <button class="btn btn-ghost" id="pref-close" style="display:none; margin-top: 8px;">Close</button>
+    </div>
+    <div class="modal-note" id="modal-note">This choice is remembered in your browser and can be changed in settings.</div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────────────────────────────────────
+let myRoomCode   = null;
+let myRole       = null;   // 'creator' | 'joiner'
+let peer         = null;   // simple-peer instance
+
+// Queue state
+let fileQueue       = [];
+let currentFileIdx  = 0;
+
+// Receive state
+let incomingMeta    = null;
+let receivedBuffers = [];
+let receivedBytes   = 0;
+let transferStart   = 0;
+
+const CHUNK_SIZE = 262144; // 256 KB — Ultra-fast throughput
+const MAX_BUFFERED_AMOUNT = 67108864; // 64 MB - Massive throughput for high-speed networks
+const MIN_BUFFERED_AMOUNT = 16777216; // 16 MB - Resume threshold to keep the flow aggressive
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VIEW HELPER
+// ─────────────────────────────────────────────────────────────────────────────
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  LOGGING
+// ─────────────────────────────────────────────────────────────────────────────
+function sanitize(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function log(msg) {
+  const box  = document.getElementById('log-box');
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  line.innerHTML = `<span class="log-time">${t}</span><span>${sanitize(msg)}</span>`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+  console.log('[filedrop]', msg);
+}
+
+function sanitizeFilename(name) {
+  // Preserve spaces, brackets, parentheses. Strip path components and restricted chars.
+  return name.replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FORMAT HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+function formatBytes(b) {
+  if (b === 0) return '0 B';
+  const k = 1024, s = ['B','KB','MB','GB'];
+  const i = Math.floor(Math.log(b) / Math.log(k));
+  return (b / Math.pow(k, i)).toFixed(1) + ' ' + s[i];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SOCKET.IO
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  URL PARAM — auto-fill join code when opening a QR-generated link
+// ─────────────────────────────────────────────────────────────────────────────
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  if (code) {
+    document.getElementById('input-code').value = code.toUpperCase();
+  }
+})();
+
+const socket = io(window.location.origin);
+
+socket.on('connect',    () => log('Connected to server · ' + socket.id));
+socket.on('disconnect', () => log('Disconnected from server'));
+
+socket.on('peer-left', () => {
+  log('⚠️ Peer disconnected.');
+  // If we were in the middle of a transfer, reset
+  if (incomingMeta || document.getElementById('view-progress').classList.contains('active')) {
+    log('❌ Transfer interrupted.');
+    showComplete('Connection lost', 'The peer disconnected before the transfer could finish.', false);
+  } else {
+    showView('lobby');
+  }
+  
+  // Cleanup WebRTC
+  if (peer) {
+    peer.destroy();
+    peer = null;
+  }
+});
+
+// ── Create Room ───────────────────────────────────────────────────────────────
+document.getElementById('btn-create').addEventListener('click', () => {
+  const password = document.getElementById('input-create-password').value;
+  socket.emit('create-room', { password });
+});
+
+socket.on('room-created', ({ code }) => {
+  myRoomCode = code;
+  document.getElementById('display-code').textContent = code;
+
+  // Build the join URL and generate a QR code via the free qrserver.com API
+  const joinUrl = window.location.origin + window.location.pathname + '?code=' + code;
+  document.getElementById('qr-img').src =
+    'https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=' +
+    encodeURIComponent(joinUrl) + '&bgcolor=ffffff&color=111111&margin=2';
+
+  showView('waiting');
+  log('Room created: ' + code);
+});
+
+// ── Copy code ─────────────────────────────────────────────────────────────────
+document.getElementById('btn-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(myRoomCode).then(() => {
+    const btn = document.getElementById('btn-copy');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = 'Copy Room Code', 2000);
+  });
+});
+
+// ── Join Room ─────────────────────────────────────────────────────────────────
+document.getElementById('btn-join').addEventListener('click', joinRoom);
+document.getElementById('input-code').addEventListener('keydown', e => {
+  if (e.key === 'Enter') joinRoom();
+});
+document.getElementById('input-join-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') joinRoom();
+});
+
+function joinRoom() {
+  const code = document.getElementById('input-code').value.trim().toUpperCase();
+  const password = document.getElementById('input-join-password').value;
+  if (!code) { log('Enter a room code first.'); return; }
+  myRoomCode = code;
+  document.getElementById('connecting-code').textContent = code;
+  socket.emit('join-room', { code, password });
+  showView('connecting');
+  log('Joining room: ' + code);
+}
+
+socket.on('join-error', ({ message }) => {
+  showView('lobby');
+  log('Error: ' + message);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  WEBRTC (Simplified with simple-peer)
+// ─────────────────────────────────────────────────────────────────────────────
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turns:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ],
+  iceCandidatePoolSize: 10
+};
+
+socket.on('room-ready', ({ code, role }) => {
+  myRole = role;
+  log('Peer joined · role: ' + role + ' · starting WebRTC…');
+
+  peer = new SimplePeer({
+    initiator: role === 'creator',
+    trickle: true,
+    config: RTC_CONFIG
+  });
+
+  peer.on('signal', data => {
+    socket.emit('signal', { code: myRoomCode, data });
+  });
+
+  socket.on('signal', ({ data }) => {
+    peer.signal(data);
+  });
+
+  peer.on('connect', () => {
+    log('✅ Connected via WebRTC · P2P channel open');
+    showView('transfer');
+  });
+
+  peer.on('data', onPeerData);
+
+  peer.on('close', () => {
+    log('P2P connection closed.');
+    if (incomingMeta) {
+      log('❌ Transfer interrupted.');
+      showComplete('Connection lost', 'The P2P connection was closed.', false);
+    }
+    // Remove the accept/reject modal if it's open
+    const modal = document.getElementById('accept-modal');
+    if (modal) modal.remove();
+  });
+
+  peer.on('error', (err) => {
+    log('P2P error: ' + err.message);
+    showComplete('Transfer Error', 'An error occurred during data transfer.', true);
+  });
+});
+
+function onPeerData(data) {
+  // Simple-peer sends data as Uint8Array or Buffer
+  if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
+    // 1. If we are currently receiving a file, treat this as a BINARY CHUNK immediately.
+    // This prevents the decoder from trying to interpret binary data as UTF-8.
+    if (incomingMeta) {
+      handleBinaryChunk(data);
+      return;
+    }
+
+    // 2. If no file is incoming, check if it's a control message (JSON)
+    const decoder = new TextDecoder();
+    let text;
+    try {
+      text = decoder.decode(data);
+    } catch (e) {
+      // Not a string, and no file meta? Unexpected, but ignore.
+      return;
+    }
+
+    // Try parsing as JSON
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch (e) {
+      // Not JSON, ignore
+      return;
+    }
+
+    if (payload.type === 'chat') {
+      appendChatMessage(payload.text, 'peer');
+    } else if (payload.type === 'file-meta') {
+      log(`Receiver got transfer-request: "${payload.name}"`);
+      
+      // Create a simple custom modal for accept/reject
+      const modal = document.createElement('div');
+      modal.id = 'accept-modal';
+      modal.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:9999;";
+      modal.innerHTML = `
+        <div style="background:var(--card); padding:32px; border-radius:16px; width:90%; max-width:400px; text-align:center; border:1px solid var(--border);">
+          <h3 style="margin-bottom:16px;">Incoming File</h3>
+          <p style="margin-bottom:8px; font-weight:bold;">${payload.name}</p>
+          <p style="margin-bottom:24px; color:var(--muted);">${formatBytes(payload.size)}</p>
+          <div style="display:flex; gap:12px;">
+            <button id="reject-btn" class="btn btn-ghost" style="flex:1;">Reject</button>
+            <button id="accept-btn" class="btn btn-primary" style="flex:1;">Accept</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      document.getElementById('accept-btn').onclick = () => {
+        log('Accepting transfer...');
+        peer.send(JSON.stringify({ type: 'transfer-accepted' }));
+        modal.remove();
+        
+        const safeName = sanitizeFilename(payload.name);
+        incomingMeta    = { ...payload, name: safeName };
+        receivedBuffers = [];
+        receivedBytes   = 0;
+        transferStart   = Date.now();
+        log('⬇ Receiving: ' + incomingMeta.name + ' (' + formatBytes(incomingMeta.size) + ')');
+        startProgress(incomingMeta.name, incomingMeta.size, 'Receiving');
+      };
+
+      document.getElementById('reject-btn').onclick = () => {
+        log('Rejecting transfer.');
+        peer.send(JSON.stringify({ type: 'transfer-rejected' }));
+        modal.remove();
+      };
+    } else if (payload.type === 'transfer-accepted') {
+      log('Peer accepted transfer. Starting stream...');
+      // If we have a pending file send, start it
+      if (typeof window.startCurrentFileTransfer === 'function') {
+        window.startCurrentFileTransfer();
+      }
+    } else if (payload.type === 'transfer-rejected') {
+      log('❌ Peer rejected the transfer.');
+      showComplete('Rejected', 'The recipient declined the file transfer.', false);
+    }
+  }
+}
+
+function handleBinaryChunk(data) {
+  if (!incomingMeta) return;
+  receivedBuffers.push(data);
+  receivedBytes += data.byteLength || data.length;
+  updateProgress(receivedBytes, incomingMeta.size);
+
+  if (receivedBytes >= incomingMeta.size) {
+    const duration = ((Date.now() - transferStart) / 1000).toFixed(1);
+    const blob = new Blob(receivedBuffers, { type: incomingMeta.type || 'application/octet-stream' });
+    
+    log(`✅ ${incomingMeta.name} received in ${duration}s — saving…`);
+    log(`Integrity Check: Expected ${incomingMeta.size} bytes | Received ${receivedBytes} bytes`);
+    log(`Receiver saving file: "${incomingMeta.name}"`);
+    
+    showComplete('File received!', `${incomingMeta.name} is ready. (Took ${duration}s)`, true);
+    downloadFile(blob, incomingMeta.name);
+    incomingMeta = null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DATA CHANNEL (Replaced by simple-peer events)
+// ─────────────────────────────────────────────────────────────────────────────
+function appendChatMessage(msg, side) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${side}`;
+  div.textContent = msg; 
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg || !peer || !peer.connected) return;
+  
+  const payload = { type: 'chat', text: msg };
+  peer.send(JSON.stringify(payload));
+  appendChatMessage(msg, 'me');
+  input.value = '';
+}
+
+document.getElementById('chat-send').addEventListener('click', sendChatMessage);
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendChatMessage();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SEND FILE
+// ─────────────────────────────────────────────────────────────────────────────
+function sendFiles(files) {
+  if (!peer || !peer.connected) {
+    log('Error: P2P connection not ready.');
+    return;
+  }
+  
+  fileQueue = Array.from(files);
+  currentFileIdx = 0;
+  processNextInQueue();
+}
+
+function processNextInQueue() {
+  if (currentFileIdx >= fileQueue.length) {
+    const total = fileQueue.length;
+    log(`✅ All ${total} files sent!`);
+    showComplete('Batch complete!', `${total} files were delivered successfully.`, true);
+    fileQueue = [];
+    return;
+  }
+
+  const file = fileQueue[currentFileIdx];
+  log(`Sender reading file: "${file.name}"`);
+  log(`⬆ Sending (${currentFileIdx + 1}/${fileQueue.length}): ${file.name}`);
+  document.getElementById('queue-status').textContent = `Sending ${currentFileIdx + 1} of ${fileQueue.length}`;
+
+  peer.send(JSON.stringify({ 
+    type: 'file-meta',
+    name: file.name, 
+    size: file.size, 
+    type_mime: file.type 
+  }));
+
+  transferStart = Date.now();
+  let offset = 0;
+  startProgress(file.name, file.size, 'Sending');
+
+  window.startCurrentFileTransfer = async () => {
+    if (!peer || !peer.connected) return;
+    
+    // Use the internal channel's bufferedAmount if available, otherwise default to 0
+    const getBufferedAmount = () => (peer._channel ? peer._channel.bufferedAmount : 0);
+
+    // Fill the buffer until it reaches the high-water mark
+    while (offset < file.size && getBufferedAmount() < MAX_BUFFERED_AMOUNT) {
+      const slice = file.slice(offset, offset + CHUNK_SIZE);
+      offset += slice.size;
+      
+      try {
+        const buf = await slice.arrayBuffer();
+        if (!peer || !peer.connected) return;
+        peer.send(buf);
+        updateProgress(offset, file.size);
+      } catch (err) {
+        log('Error reading file: ' + err.message);
+        showComplete('Error', 'Failed to read file for transfer.', true);
+        return;
+      }
+    }
+
+    if (offset >= file.size) {
+      const checkFinished = setInterval(() => {
+        if (getBufferedAmount() === 0) {
+          clearInterval(checkFinished);
+          const duration = ((Date.now() - transferStart) / 1000).toFixed(1);
+          log(`🚀 ${file.name} sent in ${duration}s!`);
+          currentFileIdx++;
+          setTimeout(processNextInQueue, 200);
+        }
+      }, 100);
+      return;
+    }
+
+    if (getBufferedAmount() > MAX_BUFFERED_AMOUNT) {
+      // Aggressive wait for drain
+      const checkDrain = setInterval(() => {
+        if (getBufferedAmount() < MIN_BUFFERED_AMOUNT) {
+          clearInterval(checkDrain);
+          window.startCurrentFileTransfer();
+        }
+      }, 10);
+    } else {
+      // Use requestAnimationFrame or setImmediate-like behavior for maximum speed
+      setTimeout(window.startCurrentFileTransfer, 0);
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SAVE PREFERENCE
+// ─────────────────────────────────────────────────────────────────────────────
+const SAVE_PREF_KEY = 'filedrop_save_pref'; // stored as 'auto' | 'pick'
+
+function getSavePref() {
+  return localStorage.getItem(SAVE_PREF_KEY);
+}
+
+// Show the one-time modal, then call callback with the chosen pref.
+function askSavePref(callback, isSettings = false) {
+  const modal = document.getElementById('save-pref-modal');
+  const title = document.getElementById('modal-title');
+  const sub = document.getElementById('modal-sub');
+  const closeBtn = document.getElementById('pref-close');
+  
+  if (isSettings) {
+    title.textContent = 'Transfer Settings';
+    sub.textContent = 'Update how Filedrop handles incoming files.';
+    closeBtn.style.display = 'block';
+  } else {
+    title.textContent = 'Where should received files be saved?';
+    sub.textContent = 'Choose how Filedrop handles files you receive. Your browser may still prompt you depending on its own settings.';
+    closeBtn.style.display = 'none';
+  }
+
+  modal.classList.add('active');
+  
+  document.getElementById('pref-auto').onclick = () => {
+    localStorage.setItem(SAVE_PREF_KEY, 'auto');
+    modal.classList.remove('active');
+    if (callback) callback('auto');
+  };
+  document.getElementById('pref-pick').onclick = () => {
+    localStorage.setItem(SAVE_PREF_KEY, 'pick');
+    modal.classList.remove('active');
+    if (callback) callback('pick');
+  };
+  closeBtn.onclick = () => {
+    modal.classList.remove('active');
+  };
+}
+
+document.getElementById('btn-settings').addEventListener('click', () => {
+  askSavePref(null, true);
+});
+
+// Called after a file is fully received.
+function downloadFile(blob, filename) {
+  const pref = getSavePref();
+  if (pref === null) {
+    // First time ever — ask, then download.
+    askSavePref((choice) => performDownload(blob, filename, choice));
+  } else {
+    performDownload(blob, filename, pref);
+  }
+}
+
+async function performDownload(blob, filename, pref) {
+  if (pref === 'pick' && 'showSaveFilePicker' in window) {
+    try {
+      const ext = filename.includes('.') ? '.' + filename.split('.').pop() : '';
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'File', accept: { [blob.type || 'application/octet-stream']: ext ? [ext] : [] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      log('✅ Saved to chosen location.');
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        log('Save cancelled by user.');
+      } else {
+        log('Picker unavailable — saving to Downloads instead.');
+        autoDownload(blob, filename);
+      }
+    }
+  } else {
+    autoDownload(blob, filename);
+  }
+}
+
+function autoDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  log('✅ Saved to Downloads folder.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PROGRESS UI
+// ─────────────────────────────────────────────────────────────────────────────
+function startProgress(name, size, direction) {
+  document.getElementById('progress-filename').textContent  = name;
+  document.getElementById('progress-size').textContent      = formatBytes(size);
+  document.getElementById('progress-direction').textContent = direction + '…';
+  document.getElementById('progress-bar').style.width       = '0%';
+  document.getElementById('progress-percent').textContent   = '0%';
+  document.getElementById('progress-speed').textContent     = '—';
+  
+  // Show queue status if we are sending multiple files
+  const qStatus = document.getElementById('queue-status');
+  if (direction === 'Receiving') {
+    qStatus.style.display = 'none';
+  } else {
+    qStatus.style.display = 'block';
+  }
+  
+  showView('progress');
+}
+
+function updateProgress(done, total) {
+  const pct     = Math.min(100, Math.round(done / total * 100));
+  const elapsed = (Date.now() - transferStart) / 1000 || 0.001;
+  const speed   = done / elapsed;
+  document.getElementById('progress-bar').style.width     = pct + '%';
+  document.getElementById('progress-percent').textContent = pct + '%';
+  document.getElementById('progress-speed').textContent   = formatBytes(speed) + '/s';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  COMPLETE UI
+// ─────────────────────────────────────────────────────────────────────────────
+function showComplete(title, sub, canSendAnother) {
+  document.getElementById('complete-title').textContent = title;
+  document.getElementById('complete-sub').textContent   = sub;
+  document.getElementById('btn-send-another').style.display = canSendAnother ? '' : 'none';
+  showView('complete');
+}
+
+document.getElementById('btn-send-another').addEventListener('click', () => {
+  showView('transfer');
+});
+
+document.getElementById('btn-back-to-chat').addEventListener('click', () => {
+  showView('transfer');
+});
+
+document.getElementById('btn-progress-back').addEventListener('click', () => {
+  showView('transfer');
+});
+
+document.getElementById('btn-new-room').addEventListener('click', () => {
+  if (confirm('Are you sure you want to leave this room and disconnect?')) {
+    location.reload();
+  }
+});
+
+// ── CLI Help Modal ──
+const helpModal = document.getElementById('help-modal');
+document.getElementById('open-help').addEventListener('click', () => {
+  helpModal.classList.add('active');
+});
+document.getElementById('close-help').addEventListener('click', () => {
+  helpModal.classList.remove('active');
+});
+window.addEventListener('click', (e) => {
+  if (e.target === helpModal) helpModal.classList.remove('active');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FILE PICKING — click + drag & drop
+// ─────────────────────────────────────────────────────────────────────────────
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length > 0) sendFiles(fileInput.files);
+  fileInput.value = ''; // reset so same files can be re-sent
+});
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length > 0) sendFiles(e.dataTransfer.files);
+});
+</script>
+</body>
+</html>
